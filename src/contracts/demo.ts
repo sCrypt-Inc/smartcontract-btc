@@ -1,41 +1,60 @@
-import { assert, method, prop, SmartContract } from 'scrypt-ts'
+import {
+    assert,
+    FixedArray,
+    ByteString,
+    method,
+    prop,
+    Sha256,
+    SmartContract,
+    sha256,
+} from 'scrypt-ts'
+import { generateRandomHex } from '../util'
 
-export class Demo extends SmartContract {
+export type HashArray = FixedArray<Sha256, typeof MultiPartyHashPuzzle.N>
+export type PreimageArray = FixedArray<
+    ByteString,
+    typeof MultiPartyHashPuzzle.N
+>
+
+export class MultiPartyHashPuzzle extends SmartContract {
+    static readonly N = 3
+
     @prop()
-    readonly x: bigint
+    readonly hashes: HashArray
 
-    @prop()
-    readonly y: bigint
-
-    // The values of the x and y properties get passed via the
-    // smart contract's constructor.
-    constructor(x: bigint, y: bigint) {
+    constructor(hashes: HashArray) {
         super(...arguments)
-        this.x = x
-        this.y = y
+        this.hashes = hashes
     }
 
-    // Contract internal method to compute x + y
     @method()
-    sum(a: bigint, b: bigint): bigint {
-        return a + b
-    }
-
-    // Public method which can be unlocked by providing the solution to x + y
-    @method()
-    public add(z: bigint) {
-        assert(z == this.sum(this.x, this.y), 'add check failed')
-    }
-
-    // Public method which can be unlocked by providing the solution to x - y
-    @method()
-    public sub(z: bigint) {
-        assert(z == this.x - this.y, 'sub check failed')
+    public unlock(preimages: PreimageArray) {
+        for (let i = 0; i < MultiPartyHashPuzzle.N; i++) {
+            assert(sha256(preimages[i]) == this.hashes[i], 'hash mismatch')
+        }
+        assert(true)
     }
 }
 
 (async () => {
-    Demo.compile()
-    const demo = new Demo(-2n, 7n)
-    console.log(demo.lockingScript.toHex())
+    const _preimages = []
+    const _hashes = []
+    for (let i = 0; i < MultiPartyHashPuzzle.N; i++) {
+        const preimage = generateRandomHex(32)
+        _preimages.push(preimage)
+        _hashes.push(sha256(preimage))
+    }
+    const preimages = _preimages as FixedArray<
+        ByteString,
+        typeof MultiPartyHashPuzzle.N
+    >
+    const hashes = _hashes as FixedArray<Sha256, typeof MultiPartyHashPuzzle.N>
+
+    await MultiPartyHashPuzzle.compile()
+    const instance = new MultiPartyHashPuzzle(hashes)
+
+    console.log('Hash preimages:')
+    console.log(preimages)
+    console.log('Redeem script:')
+    console.log(instance.lockingScript.toHex().replaceAll('5195', '61'))
 })()

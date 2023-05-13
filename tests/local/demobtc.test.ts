@@ -1,50 +1,63 @@
 import { expect, use } from 'chai'
-import { Demo } from '../../src/contracts/demo'
-import { MethodCallOptions } from 'scrypt-ts'
+import {
+    ByteString,
+    FixedArray,
+    MethodCallOptions,
+    Sha256,
+    sha256,
+} from 'scrypt-ts'
+import { MultiPartyHashPuzzle } from '../../src/contracts/demo'
 import chaiAsPromised from 'chai-as-promised'
 import { getDummySigner, getDummyUTXO } from '../utils/txHelper'
-
+import { generateRandomHex } from '../../src/util'
 use(chaiAsPromised)
 
-describe('Test SmartContract `Demo`', () => {
-    let demo: Demo
+describe('Test SmartContract `MultiPartyHashPuzzle`', () => {
+    let instance: MultiPartyHashPuzzle
+
+    let preimages: FixedArray<ByteString, typeof MultiPartyHashPuzzle.N>
+    let hashes: FixedArray<Sha256, typeof MultiPartyHashPuzzle.N>
 
     before(async () => {
-        await Demo.compile()
+        const _preimages = []
+        const _hashes = []
+        for (let i = 0; i < MultiPartyHashPuzzle.N; i++) {
+            const preimage = generateRandomHex(32)
+            _preimages.push(preimage)
+            _hashes.push(sha256(preimage))
+        }
+        preimages = _preimages as FixedArray<
+            ByteString,
+            typeof MultiPartyHashPuzzle.N
+        >
+        hashes = _hashes as FixedArray<Sha256, typeof MultiPartyHashPuzzle.N>
 
-        demo = new Demo(-2n, 7n)
-        await demo.connect(getDummySigner())
+        await MultiPartyHashPuzzle.compile()
+        instance = new MultiPartyHashPuzzle(hashes)
+
+        await instance.connect(getDummySigner())
     })
 
-    it('should pass `add`', async () => {
-        const { tx: callTx, atInputIndex } = await demo.methods.add(5n, {
-            fromUTXO: getDummyUTXO(),
-        } as MethodCallOptions<Demo>)
+    it('should pass using correct preimages.', async () => {
+        const { tx: callTx, atInputIndex } = await instance.methods.unlock(
+            preimages,
+            {
+                fromUTXO: getDummyUTXO(),
+            } as MethodCallOptions<MultiPartyHashPuzzle>
+        )
+
         const result = callTx.verifyScript(atInputIndex)
         expect(result.success, result.error).to.eq(true)
     })
 
-    it('should pass `sub`', async () => {
-        const { tx: callTx, atInputIndex } = await demo.methods.sub(-9n, {
-            fromUTXO: getDummyUTXO(),
-        } as MethodCallOptions<Demo>)
-        const result = callTx.verifyScript(atInputIndex)
-        expect(result.success, result.error).to.eq(true)
-    })
+    it('should throw with a wrong preimage.', async () => {
+        const preimagesWrong = Array.from(preimages)
+        preimagesWrong[0] = sha256('aabbcc')
 
-    it('should throw when calling `add`', () => {
         return expect(
-            demo.methods.add(-5n, {
+            instance.methods.unlock(preimagesWrong, {
                 fromUTXO: getDummyUTXO(),
-            } as MethodCallOptions<Demo>)
-        ).to.be.rejectedWith(/add check failed/)
-    })
-
-    it('should throw when calling `sub`', () => {
-        return expect(
-            demo.methods.sub(9n, {
-                fromUTXO: getDummyUTXO(),
-            } as MethodCallOptions<Demo>)
-        ).to.be.rejectedWith(/sub check failed/)
+            } as MethodCallOptions<MultiPartyHashPuzzle>)
+        ).to.be.rejectedWith(/hash mismatch/)
     })
 })
